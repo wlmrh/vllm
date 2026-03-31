@@ -245,6 +245,7 @@ class LLMEngine:
                     "latter will be used, and the former will be ignored."
                 )
         else:
+            # 将原始输入转化为 EngineCoreRequest 格式供模型理解
             request = self.input_processor.process_inputs(
                 request_id,
                 prompt,
@@ -256,6 +257,7 @@ class LLMEngine:
                 trace_headers=trace_headers,
                 priority=priority,
             )
+            # 提取出该 prompt 的原始文本
             prompt_text, _, _ = extract_prompt_components(self.model_config, prompt)
 
         self.input_processor.assign_request_id(request)
@@ -265,6 +267,8 @@ class LLMEngine:
         # Use cloned params that may have been updated in process_inputs()
         params = request.params
 
+        # n 表示针对一个 prompt 需要生成的候选序列的数量
+        # 需要几个
         n = params.n if isinstance(params, SamplingParams) else 1
 
         if n == 1:
@@ -299,16 +303,18 @@ class LLMEngine:
 
         # 1) Get EngineCoreOutput from the EngineCore.
         with record_function_or_nullcontext("llm_engine step: get_output"):
-            outputs = self.engine_core.get_output()
+            outputs = self.engine_core.get_output() # 等待并回收上一轮 GPU 计算出的结果
 
         # 2) Process EngineCoreOutputs.
         with record_function_or_nullcontext("llm_engine step: process_outputs"):
             iteration_stats = IterationStats() if self.log_stats else None
+            # 调用 output_processor 的方法，将模型输出转化为用户能看懂的形式
             processed_outputs = self.output_processor.process_outputs(
                 outputs.outputs,
                 engine_core_timestamp=outputs.timestamp,
                 iteration_stats=iteration_stats,
             )
+            # 更新 Scheduler 的统计信息
             self.output_processor.update_scheduler_stats(outputs.scheduler_stats)
 
         # 3) Abort any reqs that finished due to stop strings.

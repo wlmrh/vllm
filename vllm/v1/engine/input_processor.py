@@ -192,6 +192,7 @@ class InputProcessor:
         else:
             request.request_id = f"{request.external_req_id}-{random_uuid():.8}"
 
+    # 对请求进行预处理，一起打包到一个 EngineCoreRequest 对象中
     def process_inputs(
         self,
         request_id: str,

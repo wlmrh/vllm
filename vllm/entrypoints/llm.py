@@ -494,9 +494,11 @@ class LLM:
                 "generative model."
             )
 
+        # 初始化采样参数
         if sampling_params is None:
             sampling_params = self.get_default_sampling_params()
 
+        # 使用当前参数处理 prompt 并返回每个 prompt 最终生成的结果 List[RequestOutput]
         return self._run_completion(
             prompts=prompts,
             params=sampling_params,
@@ -1816,6 +1818,7 @@ class LLM:
         priority: list[int] | None = None,
         tokenization_kwargs: dict[str, Any] | None = None,
     ) -> list[str]:
+        # 将各种参数转化为列表形式
         seq_prompts = prompt_to_seq(prompts)
         seq_params = self._params_to_seq(params, len(seq_prompts))
         seq_lora_requests = self._lora_request_to_seq(lora_request, len(seq_prompts))
@@ -1948,6 +1951,7 @@ class LLM:
 
         try:
             for i, prompt in enumerate(prompts):
+                # 当前 
                 request_id = self._add_request(
                     prompt,
                     params[i],
@@ -1976,7 +1980,7 @@ class LLM:
             # We only care about the final output
             params.output_kind = RequestOutputKind.FINAL_ONLY
 
-        request_id = str(next(self.request_counter))
+        request_id = str(next(self.request_counter)) # 为当前 request 创建一个全局唯一的 request_id，并转化为 str
 
         return self.llm_engine.add_request(
             request_id,
@@ -2008,7 +2012,7 @@ class LLM:
         total_in_toks = 0
         total_out_toks = 0
         while self.llm_engine.has_unfinished_requests():
-            step_outputs = self.llm_engine.step()
+            step_outputs = self.llm_engine.step() # 得到每个 Sequence 对应的结果：List[RequestOutput]
             for output in step_outputs:
                 assert isinstance(output, output_type)
                 if output.finished:
