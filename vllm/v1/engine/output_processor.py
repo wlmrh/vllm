@@ -204,6 +204,7 @@ class RequestState:
             self.stats.arrival_time = update.arrival_time
         self.is_prefilling = True
 
+    # 从一个 EngineCoreRequest 创建新的 RequestState 实例，根据请求的采样或池化设置初始化处理组件和参数。用于为文本生成或池化任务设置请求状态
     @classmethod
     def from_new_request(
         cls,

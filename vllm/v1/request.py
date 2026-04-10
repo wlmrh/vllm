@@ -74,10 +74,10 @@ class Request:
         resumable: bool = False,
         reasoning_ended: bool | None = None,
     ) -> None:
-        self.request_id = request_id
+        self.request_id = request_id # 唯一请求标识 id
         self.client_index = client_index
         self.priority = priority
-        self.sampling_params = sampling_params
+        self.sampling_params = sampling_params # 采样参数
         self.pooling_params = pooling_params
         self.lora_request = lora_request
         self.structured_output_request = StructuredOutputRequest.from_sampling_params(
@@ -111,7 +111,7 @@ class Request:
         else:
             raise ValueError("sampling_params and pooling_params can't both be unset")
 
-        self.prompt_token_ids = prompt_token_ids
+        self.prompt_token_ids = prompt_token_ids # 该请求的输入 token id
         self.prompt_embeds = prompt_embeds
         # Cache per-block prompt-embed hashes to avoid rehashing the same
         # tensor slices when generating extra keys.
@@ -120,7 +120,7 @@ class Request:
             prompt_token_ids, prompt_embeds
         )
         self._output_token_ids: list[int] = []
-        self._all_token_ids: list[int] = (
+        self._all_token_ids: list[int] = ( # 记录已经生成的Token
             self.prompt_token_ids.copy()
             if self.prompt_token_ids is not None
             else [0] * self.num_prompt_tokens
@@ -132,7 +132,7 @@ class Request:
         self.discard_latest_async_tokens = False
 
         self.spec_token_ids: list[int] = []
-        self.num_computed_tokens = 0
+        self.num_computed_tokens = 0 # 记录当前已完成的计算进度
         self.cache_salt: str | None = cache_salt
 
         # Multi-modal related

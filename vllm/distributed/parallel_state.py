@@ -308,7 +308,7 @@ class GroupCoordinator:
     #   1     |   0  |  1   |     1      |       1
     #   2     |   1  |  2   |     0      |       2
     #   3     |   1  |  3   |     1      |       3
-    local_rank: int  # local rank used to assign devices
+    local_rank: int  # use GPU with ID: local_rank
     rank_in_group: int  # rank inside the group
     cpu_group: ProcessGroup  # group for CPU communication
     device_group: ProcessGroup  # group for device communication

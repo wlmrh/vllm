@@ -284,7 +284,10 @@ class InprocClient(EngineCoreClient):
         self.engine_core = EngineCore(*args, **kwargs)
 
     def get_output(self) -> EngineCoreOutputs:
+        # 调用底层的执行函数，返回输出和一个 bool 值，表示这一步是否真在 GPU 上跑了模型
         outputs, model_executed = self.engine_core.step_fn()
+
+        # 状态清理，如：释放已经完成的 Sequence 的显存块等
         self.engine_core.post_step(model_executed=model_executed)
         return outputs and outputs.get(0) or EngineCoreOutputs()
 

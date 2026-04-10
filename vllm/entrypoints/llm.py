@@ -379,6 +379,7 @@ class LLM:
 
         log_non_default_args(engine_args)
 
+        # 使用给定的参数构建一个 LLMEngine 对象
         self.llm_engine = LLMEngine.from_engine_args(
             engine_args=engine_args, usage_context=UsageContext.LLM_CLASS
         )
@@ -498,7 +499,7 @@ class LLM:
         if sampling_params is None:
             sampling_params = self.get_default_sampling_params()
 
-        # 使用当前参数处理 prompt 并返回每个 prompt 最终生成的结果 List[RequestOutput]
+        # 使用当前参数处理 prompt 并返回每个请求最终处理的结果 List[RequestOutput]
         return self._run_completion(
             prompts=prompts,
             params=sampling_params,
@@ -1851,6 +1852,7 @@ class LLM:
         priority: list[int] | None = None,
         tokenization_kwargs: dict[str, Any] | None = None,
     ):
+        # 将输入转化为引擎能处理的对象并将其添加到队列中等待处理
         self._add_completion_requests(
             prompts=prompts,
             params=params,
@@ -1859,6 +1861,7 @@ class LLM:
             priority=priority,
             tokenization_kwargs=tokenization_kwargs,
         )
+        # 运行引擎并返回每个序列的运算结果 List[RequestOutput]
         return self._run_engine(use_tqdm=use_tqdm, output_type=output_type)
 
     def _run_chat(
@@ -1939,6 +1942,7 @@ class LLM:
 
         return self._run_engine(output_type, use_tqdm=use_tqdm)
 
+    # 将每个请求放入等待队列中，然后将所有新加入的请求 ID 列表返回
     def _render_and_add_requests(
         self,
         prompts: Iterable[EngineInput],
@@ -1951,7 +1955,6 @@ class LLM:
 
         try:
             for i, prompt in enumerate(prompts):
-                # 当前 
                 request_id = self._add_request(
                     prompt,
                     params[i],
@@ -1969,6 +1972,7 @@ class LLM:
 
         return added_request_ids
 
+    # 调用 LLMEngine 对象的接口，向其添加一个新的请求，使用给定的 prompt、参数、可选的 LoRA 配置和优先级。生成一个唯一的请求 ID，并确保 SamplingParams 输出仅设置为最终结果。以字符串形式返回请求 ID。
     def _add_request(
         self,
         prompt: EngineInput,
@@ -2012,7 +2016,9 @@ class LLM:
         total_in_toks = 0
         total_out_toks = 0
         while self.llm_engine.has_unfinished_requests():
-            step_outputs = self.llm_engine.step() # 得到每个 Sequence 对应的结果：List[RequestOutput]
+            step_outputs = self.llm_engine.step() # 得到每个 Sequence 经历了这次 step 之后得到的结果和所处状态：List[RequestOutput]
+
+            # 遍历该 step 的每一个计算结果，如果当前 Sequence 已经结束，那么将其添加到 outputs 中
             for output in step_outputs:
                 assert isinstance(output, output_type)
                 if output.finished:

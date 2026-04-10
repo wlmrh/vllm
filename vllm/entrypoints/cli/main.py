@@ -61,10 +61,10 @@ def main():
         version=importlib.metadata.version("vllm"),
     )
     subparsers = parser.add_subparsers(required=False, dest="subparser")
-    cmds = {}
+    cmds = {} # dict, name(str) -> CLISubcommand
     for cmd_module in CMD_MODULES:
         new_cmds = cmd_module.cmd_init()
-        for cmd in new_cmds:
+        for cmd in new_cmds: # 这里的 cmd 是 CLISubcommand 的某个派生类对象
             cmd.subparser_init(subparsers).set_defaults(dispatch_function=cmd.cmd)
             cmds[cmd.name] = cmd
     args = parser.parse_args()

@@ -399,11 +399,11 @@ class LlamaModel(nn.Module, EagleModelMixin):
 
     def forward(
         self,
-        input_ids: torch.Tensor | None,
-        positions: torch.Tensor,
-        intermediate_tensors: IntermediateTensors | None,
-        inputs_embeds: torch.Tensor | None = None,
-        **extra_layer_kwargs,
+        input_ids: torch.Tensor | None, # 输入 Token ids
+        positions: torch.Tensor, # 位置编码信息
+        intermediate_tensors: IntermediateTensors | None, # 并行时，接收上一个 GPU 传来的中间计算结果
+        inputs_embeds: torch.Tensor | None = None, # (optional)直接传入 Embedding 后的向量
+        **extra_layer_kwargs, # 底层算子需要的参数
     ) -> torch.Tensor | IntermediateTensors | tuple[torch.Tensor, list[torch.Tensor]]:
         if get_pp_group().is_first_rank:
             if inputs_embeds is not None:

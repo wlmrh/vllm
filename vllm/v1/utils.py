@@ -420,7 +420,7 @@ def report_usage_stats(
 
 _PROFILER_FUNC = None
 
-
+# 返回一个用于分析代码块的上下文管理器，根据环境变量选择合适的实现；如果未启用分析，则退回到无操作的上下文。
 def record_function_or_nullcontext(name: str) -> AbstractContextManager:
     global _PROFILER_FUNC
 

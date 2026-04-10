@@ -664,9 +664,9 @@ async def run_server(args, **uvicorn_kwargs) -> None:
     """Run a single-worker API server."""
 
     # Add process-specific prefix to stdout and stderr.
-    decorate_logs("APIServer")
+    decorate_logs("APIServer") # 为所有标准输出添加前缀 "APIServer"
 
-    listen_address, sock = setup_server(args)
+    listen_address, sock = setup_server(args) # 在推理引擎启动前，先绑定端口并监听
     await run_server_worker(listen_address, sock, args, **uvicorn_kwargs)
 
 
@@ -681,6 +681,7 @@ async def run_server_worker(
     if args.reasoning_parser_plugin and len(args.reasoning_parser_plugin) > 3:
         ReasoningParserManager.import_reasoning_parser(args.reasoning_parser_plugin)
 
+    # 获得一个异步引擎实例 engine_client
     async with build_async_engine_client(
         args,
         client_config=client_config,
@@ -703,8 +704,8 @@ if __name__ == "__main__":
     parser = FlexibleArgumentParser(
         description="vLLM OpenAI-Compatible RESTful API server."
     )
-    parser = make_arg_parser(parser)
-    args = parser.parse_args()
-    validate_parsed_serve_args(args)
+    parser = make_arg_parser(parser) # 初始化 parser
+    args = parser.parse_args() # 载入 vLLM 的配置项
+    validate_parsed_serve_args(args) # 验证载入的配置是否 valid
 
-    uvloop.run(run_server(args))
+    uvloop.run(run_server(args)) # 使用加载的参数配置服务

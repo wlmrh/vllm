@@ -268,7 +268,6 @@ class LLMEngine:
         params = request.params
 
         # n 表示针对一个 prompt 需要生成的候选序列的数量
-        # 需要几个
         n = params.n if isinstance(params, SamplingParams) else 1
 
         if n == 1:
@@ -295,6 +294,7 @@ class LLMEngine:
 
         return req_id
 
+    # 处理引擎的一个步骤：检索模型输出，将其处理为用户友好的结果，更新统计信息，处理被中止的请求，并返回一个由 RequestOutput 或 PoolingRequestOutput 组成的列表。如果执行的是虚拟批次，则返回空列表。
     def step(self) -> list[RequestOutput | PoolingRequestOutput]:
         if self.should_execute_dummy_batch:
             self.should_execute_dummy_batch = False

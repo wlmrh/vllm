@@ -357,7 +357,7 @@ class Scheduler(SchedulerInterface):
 
         req_to_new_blocks: dict[str, KVCacheBlocks] = {}
         num_scheduled_tokens: dict[str, int] = {}
-        token_budget = self.max_num_scheduled_tokens
+        token_budget = self.max_num_scheduled_tokens # Max tokens generated in a step
         if self._pause_state == PauseState.PAUSED_ALL:
             # Do not schedule any requests when paused.
             token_budget = 0
@@ -394,6 +394,7 @@ class Scheduler(SchedulerInterface):
                 req_index += 1
                 continue
 
+            # 本轮新增加的 Token 数量
             num_new_tokens = (
                 request.num_tokens_with_spec
                 + request.num_output_placeholders
