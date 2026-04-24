@@ -168,6 +168,8 @@ class AsyncLLM(EngineClient):
         self._client_count = client_count
 
         self.output_handler: asyncio.Task | None = None
+        # 如果现在已经在异步环境中（asyncio.get_running_loop() 未报错），顺手把 output_handler 跑起来 
+        # 如果没有位于异步环境，先跳过，由之后的逻辑处理
         try:
             # Start output handler eagerly if we are in the asyncio eventloop.
             asyncio.get_running_loop()
@@ -296,6 +298,7 @@ class AsyncLLM(EngineClient):
     ) -> RequestOutputCollector:
         """Add new request to the AsyncLLM."""
 
+        # 检查是否存在安全问题
         if self.errored:
             raise EngineDeadError()
 
@@ -312,6 +315,7 @@ class AsyncLLM(EngineClient):
                 "prompt logprobs"
             )
 
+        # 输入标准化
         if isinstance(prompt, AsyncGenerator):
             if reasoning_ended is not None:
                 raise NotImplementedError
@@ -329,7 +333,7 @@ class AsyncLLM(EngineClient):
                 data_parallel_rank,
             )
 
-        # Convert Input --> Request.
+        # Convert Input --> EngineCoreRequest.
         if isinstance(prompt, EngineCoreRequest):
             logger.warning_once(
                 "Passing EngineCoreRequest to AsyncLLM.generate() and .add_requests() "
@@ -370,11 +374,14 @@ class AsyncLLM(EngineClient):
         self._run_output_handler()
 
         # Create a new output collector for the request.
+        # 推理还未执行，接受后续生成的 token
         queue = RequestOutputCollector(params.output_kind, request.request_id)
 
         # Use cloned params that may have been updated in process_inputs()
         params = request.params
 
+        # 根据 param.n(对同一个 prompt 需要生成 param.n 个结果)决定是否要对任务进行拆分
+        # 最终调用 self._add_request 将所有请求添加到 AsyncLLM 的队列中
         if is_pooling or params.n == 1:
             await self._add_request(request, prompt_text, None, 0, queue)
             return queue
@@ -403,9 +410,11 @@ class AsyncLLM(EngineClient):
         queue: RequestOutputCollector,
     ):
         # Add the request to OutputProcessor (this process).
+        # 将请求注册到 OutputProcessor
         self.output_processor.add_request(request, prompt, parent_req, index, queue)
 
         # Add the EngineCoreRequest to EngineCore (separate process).
+        # 将请求添加到 EngineCore 中
         await self.engine_core.add_request_async(request)
 
         if self.log_requests:
@@ -652,6 +661,7 @@ class AsyncLLM(EngineClient):
             try:
                 while True:
                     # 1) Pull EngineCoreOutputs from the EngineCore.
+                    # 非阻塞地获取 engine_core 的推理结果
                     outputs = await engine_core.get_output_async()
                     num_outputs = len(outputs.outputs)
 
@@ -664,9 +674,12 @@ class AsyncLLM(EngineClient):
                     # event loop for too long.
                     engine_core_outputs = outputs.outputs
                     for start in range(0, num_outputs, chunk_size):
+                        # 对 list[EngineCoreOutput]，每 chunk_size 进行切片，得到 outputs_slice
+                        # 将该处理切成许多个小任务，每个任务结束，调用 asyncio.sleep(0) 尝试让出空位
                         end = start + chunk_size
                         outputs_slice = engine_core_outputs[start:end]
                         # 2) Process EngineCoreOutputs.
+                        # 将原始的 Token ID 转化为文本、计算 Logprob，并将结果推入每个请求自己的 Queue 中
                         processed_outputs = output_processor.process_outputs(
                             outputs_slice, outputs.timestamp, iteration_stats
                         )
@@ -678,6 +691,7 @@ class AsyncLLM(EngineClient):
                             await asyncio.sleep(0)
 
                         # 3) Abort any reqs that finished due to stop strings.
+                        # 在 output_processor 处理后，终止那些已经结束的请求，并释放资源
                         if processed_outputs.reqs_to_abort:
                             await engine_core.abort_requests_async(
                                 processed_outputs.reqs_to_abort

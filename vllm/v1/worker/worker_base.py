@@ -224,7 +224,7 @@ class WorkerWrapperBase:
         Here we inject some common logic before initializing the worker.
         Arguments are passed to the worker class constructor.
         """
-        kwargs = all_kwargs[self.rpc_rank]
+        kwargs = all_kwargs[self.rpc_rank] # 找到属于自己的参数
 
         vllm_config: VllmConfig | None = kwargs.get("vllm_config")
         assert vllm_config is not None, (

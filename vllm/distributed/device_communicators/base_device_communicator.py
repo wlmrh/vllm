@@ -189,16 +189,21 @@ class DeviceCommunicatorBase:
         # NOTE: we have to use concat-style all-gather here,
         # stack-style all-gather has compatibility issues with
         # torch.compile . see https://github.com/pytorch/pytorch/issues/138795
-        output_size = (input_size[0] * self.world_size,) + input_size[1:]
+        # 假设要接受两张卡的 Tensor，都是 [4, 8]
+        output_size = (input_size[0] * self.world_size,) + input_size[1:] # 在第 0 个维度上进行拼接，计算拼接后的 Tensor 维度([8, 8])
         # Allocate output tensor.
         output_tensor = torch.empty(
             output_size, dtype=input_.dtype, device=input_.device
         )
         # All-gather.
+        # 将所有其他卡的数据写到大 Tensor(output_tensor) 中
         dist.all_gather_into_tensor(output_tensor, input_, group=self.device_group)
         # Reshape
+        # 将 output_size 在第零维度上的拼接展开 [2, 4, 8]
         output_tensor = output_tensor.reshape((self.world_size,) + input_size)
+        # 根据想在第几个维度上进行拼接，进行维度重塑 [4, 2, 8]，
         output_tensor = output_tensor.movedim(0, dim)
+        # 在该维度上进行拼接 [4, 16]
         output_tensor = output_tensor.reshape(
             input_size[:dim]
             + (self.world_size * input_size[dim],)

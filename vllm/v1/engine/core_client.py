@@ -598,7 +598,7 @@ class MPClient(EngineCoreClient):
                 self._apply_ready_response(payload)
 
             self.core_engine: EngineIdentity = self.core_engines[0]
-            self.utility_results: dict[int, AnyFuture] = {}
+            self.utility_results: dict[int, AnyFuture] = {} # call_id -> Future
 
             # Request objects which may contain pytorch-allocated tensors
             # that we need to keep references to until zmq is done with the
@@ -698,14 +698,14 @@ def _process_utility_output(
     output: UtilityOutput, utility_results: dict[int, AnyFuture]
 ):
     """Set the result from a utility method in the waiting future."""
-    future = utility_results.pop(output.call_id)
+    future = utility_results.pop(output.call_id) # 根据 call_id 字段，取出对应的 future 对象
     failure_message = output.failure_message
     try:
         if failure_message is not None:
             future.set_exception(Exception(failure_message))
         else:
             assert output.result is not None
-            future.set_result(output.result.result)
+            future.set_result(output.result.result) # 将完成的数据交给 future，执行回调函数
     except asyncio.InvalidStateError:
         # This can happen if the future is cancelled due to the
         # original calling task being cancelled.
@@ -921,6 +921,8 @@ class AsyncMPClient(MPClient):
         except RuntimeError:
             pass
 
+    # 确保 process_outputs_socket 协程处于运行状态
+    # 如果已经运行，那么直接返回；否则，将其添加到 loop 中
     def _ensure_output_queue_task(self):
         resources = self.resources
         if resources.output_queue_task is not None:
@@ -945,10 +947,11 @@ class AsyncMPClient(MPClient):
         async def process_outputs_socket():
             try:
                 while True:
-                    frames = await output_socket.recv_multipart(copy=False)
-                    resources.validate_alive(frames)
-                    outputs: EngineCoreOutputs = decoder.decode(frames)
+                    frames = await output_socket.recv_multipart(copy=False) # 从 socket 获取通信结果
+                    resources.validate_alive(frames) # 验证消息是否有效
+                    outputs: EngineCoreOutputs = decoder.decode(frames) # 将通信结果转化为 EngineCoreOutputs
                     if outputs.utility_output:
+                        # 通知类消息
                         if (
                             outputs.utility_output.call_id == EEP_NOTIFICATION_CALL_ID
                             and notification_callback_handler is not None
@@ -965,6 +968,7 @@ class AsyncMPClient(MPClient):
                             asyncio.create_task(
                                 notification_callback_handler(_self, notification_data)
                             )
+                        # 
                         else:
                             _process_utility_output(
                                 outputs.utility_output, utility_results
@@ -991,6 +995,7 @@ class AsyncMPClient(MPClient):
         )
 
     async def get_output_async(self) -> EngineCoreOutputs:
+        # 确保 process_outputs_socket 协程运行，循环接收来自 EngineCoreProc 的输出放到 outputs_queue 中
         self._ensure_output_queue_task()
         # If an exception arises in process_outputs_socket task,
         # it is forwarded to the outputs_queue so we can raise it
@@ -1001,6 +1006,7 @@ class AsyncMPClient(MPClient):
             raise self._format_exception(outputs) from None
         return outputs
 
+    # 将高层的 Python 对象转化为管道/网络可以直接发送的形式，然后将请求交给 _send_input_message 发送给 EngineCore
     def _send_input(
         self,
         request_type: EngineCoreRequestType,
@@ -1010,6 +1016,7 @@ class AsyncMPClient(MPClient):
         if engine is None:
             engine = self.core_engine
 
+        # 使用编码器将将具体的 request 对象序列化，然后组装为一个元组 [操作类型，编码后的二进制块]
         message = (request_type.value, *self.encoder.encode(request))
         return self._send_input_message(message, engine, request)
 
@@ -1035,6 +1042,8 @@ class AsyncMPClient(MPClient):
             with contextlib.suppress(BaseException):
                 self.add_pending_message(f.result(), objects)
 
+        # add_done_callback 接收一个函数对象，当该请求完成，会执行该参数中的函数
+        # 该函数的作用是将 objects 引用存储到该对象的一个属性中
         future.add_done_callback(add_pending)
         return future
 

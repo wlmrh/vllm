@@ -57,7 +57,7 @@ class RayWorkerMetaData:
 
     worker: ActorHandle
     created_rank: int
-    adjusted_rank: int = -1
+    adjusted_rank: int = -1 # 申请的所有 bandle 排序后的编号
     ip: str = ""
 
 
@@ -174,6 +174,7 @@ class RayDistributedExecutor(Executor):
 
         # Create the workers.
         bundle_indices: list[int]
+        # 如果已经配置 VLLM_RAY_BUNDLE_INDICES，按照其中的 bundle 来申请资源
         if envs.VLLM_RAY_BUNDLE_INDICES:
             # Use the bundle indices specified by the user.
             bundle_indices = list(map(int, envs.VLLM_RAY_BUNDLE_INDICES.split(",")))
@@ -198,13 +199,14 @@ class RayDistributedExecutor(Executor):
         driver_ip = get_ip()
         for rank, bundle_id in enumerate(bundle_indices):
             scheduling_strategy = PlacementGroupSchedulingStrategy(
-                placement_group=placement_group,
-                placement_group_capture_child_tasks=True,
-                placement_group_bundle_index=bundle_id,
+                placement_group=placement_group, # 从该 placement_group 中申请需要的 bundle 资源
+                placement_group_capture_child_tasks=True, # 该 Worker 未来创建的任何子任务也会被限制在这个资源组内
+                placement_group_bundle_index=bundle_id, # 申请的资源
             )
 
             if current_platform.ray_device_key == "GPU":
                 # NV+AMD GPUs, and Intel XPUs
+                # 创建远程 worker
                 worker = ray.remote(
                     num_cpus=0,
                     num_gpus=num_gpus,
@@ -219,7 +221,7 @@ class RayDistributedExecutor(Executor):
                     scheduling_strategy=scheduling_strategy,
                     **ray_remote_kwargs,
                 )(RayWorkerWrapper).remote(rpc_rank=rank)
-
+            # 将新申请到的 RayWorker 元数据存储到 worker_metadata 中
             worker_metadata.append(RayWorkerMetaData(worker=worker, created_rank=rank))
 
         worker_ips = ray.get(
@@ -235,7 +237,7 @@ class RayDistributedExecutor(Executor):
         logger.debug("workers: %s", worker_metadata)
         logger.debug("driver_dummy_worker: %s", self.driver_dummy_worker)
 
-        ip_counts: dict[str, int] = {}
+        ip_counts: dict[str, int] = {} # 每个 ip 的节点数量
         for ip in worker_ips:
             ip_counts[ip] = ip_counts.get(ip, 0) + 1
 
@@ -261,7 +263,7 @@ class RayDistributedExecutor(Executor):
         for i, item in enumerate(sorted_worker_metadata):
             item.adjusted_rank = i
         self.workers = [item.worker for item in sorted_worker_metadata]
-        rerank_mapping = {
+        rerank_mapping = { # 每个 worker 创建时的 rank 到排序后的 rank 之间的映射
             item.created_rank: item.adjusted_rank for item in sorted_worker_metadata
         }
         self.collective_rpc("adjust_rank", args=(rerank_mapping,))
@@ -276,8 +278,8 @@ class RayDistributedExecutor(Executor):
                 ray.get(worker.get_node_and_gpu_ids.remote())  # type: ignore[attr-defined]
             )
 
-        node_workers = defaultdict(list)  # node id -> list of worker ranks
-        node_gpus = defaultdict(list)  # node id -> list of gpu ids
+        node_workers = defaultdict(list)  # node id -> list of worker ranks(node id -> list[rank])
+        node_gpus = defaultdict(list)  # node id -> list of gpu ids(node id -> list[gpu id])
 
         for i, (node_id, gpu_ids) in enumerate(worker_node_and_gpu_ids):
             node_workers[node_id].append(i)
@@ -360,8 +362,9 @@ class RayDistributedExecutor(Executor):
 
         # Initialize the actual workers inside worker wrapper.
         all_kwargs = []
+        # 遍历每一个 Actor，获取其 local_rank，将需要的所有参数添加到kwarg中
         for rank, (node_id, _) in enumerate(worker_node_and_gpu_ids):
-            local_rank = node_workers[node_id].index(rank)
+            local_rank = node_workers[node_id].index(rank) # 找到 rank 号 Actor 是 node_id 上第几个进程
             kwargs = dict(
                 vllm_config=self.vllm_config,
                 local_rank=local_rank,

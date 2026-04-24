@@ -51,13 +51,17 @@ def batch_chat(request: Request) -> OpenAIServingChatBatch | None:
 @with_cancellation
 @load_aware_call
 async def create_chat_completion(request: ChatCompletionRequest, raw_request: Request):
+    # 获取监控格式
     metrics_header_format = raw_request.headers.get(
         ENDPOINT_LOAD_METRICS_FORMAT_HEADER_LABEL, ""
     )
+
+    # 根据 raw_request 中的配置选择合适的处理器
     handler = chat(raw_request)
     if handler is None:
         raise NotImplementedError("The model does not support Chat Completions API")
 
+    # 调用 vLLM 引擎开始推理
     generator = await handler.create_chat_completion(request, raw_request)
 
     if isinstance(generator, ErrorResponse):

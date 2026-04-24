@@ -109,7 +109,7 @@ class MultiprocExecutor(Executor):
     def _init_executor(self) -> None:
         # Call self.shutdown at exit to clean up
         # and ensure workers will be terminated.
-        self._finalizer = weakref.finalize(self, self.shutdown)
+        self._finalizer = weakref.finalize(self, self.shutdown) # 如果该对象被销毁，强制调用 shutdown 杀死所有 worker，释放显存
         self.is_failed = False
         self.failure_callback: FailureCallback | None = None
 
@@ -124,11 +124,12 @@ class MultiprocExecutor(Executor):
         set_multiprocessing_worker_envs()
 
         # use the loopback address get_loopback_ip() for communication.
+        # 通过回环地址申请一个随机端口
         distributed_init_method = get_distributed_init_method(
             get_loopback_ip(), get_open_port()
         )
-        self.rpc_broadcast_mq: MessageQueue | None = None
-        scheduler_output_handle: Handle | None = None
+        self.rpc_broadcast_mq: MessageQueue | None = None # 一对多的广播通道
+        scheduler_output_handle: Handle | None = None # 共享内存的 handler，如果对方在同一个 node 中，可以只通过 zmq 发送一个地址让对方自己读取即可
         # Initialize worker and set up message queues for SchedulerOutputs
         # and ModelRunnerOutputs
         if self.parallel_config.node_rank_within_dp == 0:
@@ -147,6 +148,8 @@ class MultiprocExecutor(Executor):
                 self.world_size,
                 self.local_world_size,
             )
+
+            # 存储 Executor 要发送给各个 workers 的数据，根据数据的类型选择发送方式，大数据直接通过 zmq 发送 
             self.rpc_broadcast_mq = MessageQueue(
                 self.world_size,
                 self.local_world_size,
@@ -170,24 +173,20 @@ class MultiprocExecutor(Executor):
                 [] if context.get_start_method() == "fork" else None
             )
 
-            # For CPU backend only, to setup OpenMP threads affinity
-            cpu_omp_manager = OMPProcessManager(self.vllm_config)
+             # 循环创建 local_world_size 个 worker 进程
             for local_rank in range(self.local_world_size):
-                global_rank = global_start_rank + local_rank
-                is_driver_worker = self._is_driver_worker(global_rank)
-                with cpu_omp_manager.configure_omp_envs(
-                    rank=global_rank, local_rank=local_rank
-                ):
-                    unready_worker_handle = WorkerProc.make_worker_process(
-                        vllm_config=self.vllm_config,
-                        local_rank=local_rank,
-                        rank=global_rank,
-                        distributed_init_method=distributed_init_method,
-                        input_shm_handle=scheduler_output_handle,
-                        shared_worker_lock=shared_worker_lock,
-                        is_driver_worker=is_driver_worker,
-                        inherited_fds=inherited_fds,
-                    )
+                global_rank = global_start_rank + local_rank # 该 worker 在整个集群中的全局编号
+                is_driver_worker = self._is_driver_worker(global_rank) # 该 worker 是否为 Rank 0 worker
+                unready_worker_handle = WorkerProc.make_worker_process(
+                    vllm_config=self.vllm_config,
+                    local_rank=local_rank, # 在当前节点上的进程编号
+                    rank=global_rank,   # 在整个分布式集群中的编号
+                    distributed_init_method=distributed_init_method,
+                    input_shm_handle=scheduler_output_handle, # 告诉 Worker 去共享内存的哪个位置获取任务
+                    shared_worker_lock=shared_worker_lock, # 防止多个子进程在初始化 GPU 时抢夺资源
+                    is_driver_worker=is_driver_worker,
+                    inherited_fds=inherited_fds,
+                )
                 unready_workers.append(unready_worker_handle)
                 if inherited_fds is not None:
                     inherited_fds.append(unready_worker_handle.death_writer.fileno())
@@ -197,7 +196,7 @@ class MultiprocExecutor(Executor):
             # deadlock, since worker.init_device() does a device sync.
 
             # Wait for all local workers to be ready.
-            self.workers = WorkerProc.wait_for_ready(unready_workers)
+            self.workers = WorkerProc.wait_for_ready(unready_workers) # 阻塞等待所有的 worker 初始化完成
 
             # Start background thread to monitor worker health if not in headless mode.
             if self.monitor_workers:
@@ -228,7 +227,7 @@ class MultiprocExecutor(Executor):
             for response_mq in self.response_mqs:
                 response_mq.wait_until_ready()
 
-            self.futures_queue = deque[FutureWrapper]()
+            self.futures_queue = deque[tuple[FutureWrapper, Callable]]() # future 对象及其回调函数构成的 tuple 队列
 
             self._post_init_executor()
 
@@ -309,7 +308,7 @@ class MultiprocExecutor(Executor):
         return self.collective_rpc(
             "execute_model",
             args=(scheduler_output,),
-            unique_reply_rank=self.output_rank,
+            unique_reply_rank=self.output_rank, # 在 TP 和 PP 下用来标识当前回答的唯一标识符
             non_block=non_block,
             timeout=envs.VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS,
             kv_output_aggregator=self.kv_output_aggregator,
@@ -370,20 +369,21 @@ class MultiprocExecutor(Executor):
             send_method = method
         else:
             send_method = cloudpickle.dumps(method, protocol=pickle.HIGHEST_PROTOCOL)
-        self.rpc_broadcast_mq.enqueue((send_method, args, kwargs, output_rank))
+        self.rpc_broadcast_mq.enqueue((send_method, args, kwargs, output_rank)) # 将任务入队，由队列将任务发送到各个 worker 中
 
         response_mqs: Sequence[MessageQueue] = self.response_mqs
         if output_rank is not None:
-            response_mqs = (response_mqs[output_rank],)
+            response_mqs = (response_mqs[output_rank],) # response_mqs 存储需要从其中获取资源的 MessageQueue，并获取 output_rank 标识的 Worker 发回时的 MessageQueue 队列
 
+        # 根据 output_rank 指定的目标获取对应的资源
         def get_response():
             responses = []
-            for mq in response_mqs:
+            for mq in response_mqs: # 遍历每一个 MessageQueue
                 dequeue_timeout = (
                     None if deadline is None else (deadline - time.monotonic())
                 )
                 try:
-                    status, result = mq.dequeue(timeout=dequeue_timeout)
+                    status, result = mq.dequeue(timeout=dequeue_timeout) # 从其中获取一个结果
                 except TimeoutError as e:
                     raise TimeoutError(f"RPC call to {method} timed out.") from e
                 if status != WorkerProc.ResponseStatus.SUCCESS:
@@ -394,13 +394,19 @@ class MultiprocExecutor(Executor):
                 responses.append(result)
             return responses[0] if output_rank is not None else responses
 
-        future = FutureWrapper(
-            self.futures_queue,
-            get_response=get_response,
-            aggregate=aggregate,
-        )
+        # 非阻塞方式，获取一个该数据 的future 对象，然后将其放置到 futures_queue 中
+        if non_block:
+            future = FutureWrapper(self.futures_queue, aggregate=aggregate)
+            self.futures_queue.appendleft((future, get_response))
+            return future
 
-        return future if non_block else future.result()
+        # First drain any pending futures in the queue.
+        while self.futures_queue:
+            future, get_fut_response = self.futures_queue.pop()
+            future.wait_for_response(get_fut_response)
+
+        # 如果只需要某一个 worker 的返回值，那么 get_response 返回 output_rank 对应的 MessageQueue 中的回复；否则，获取所有 worker 队列的返回值并将它们结合起来
+        return aggregate(get_response())
 
     @staticmethod
     def _ensure_worker_termination(worker_procs: list[BaseProcess]):
@@ -601,7 +607,7 @@ class WorkerProc:
             "shared_worker_lock": shared_worker_lock,
         }
         wrapper.init_worker(all_kwargs)
-        self.worker = wrapper
+        self.worker = wrapper # WorkerWrapper 是 Worker 的 Manager，管理其生命周期，资源、拓展功能等
 
         self.setup_proc_title_and_log_prefix(
             enable_ep=vllm_config.parallel_config.enable_expert_parallel

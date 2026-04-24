@@ -754,25 +754,29 @@ class Worker(WorkerBase):
         self, scheduler_output: "SchedulerOutput"
     ) -> ModelRunnerOutput | AsyncModelRunnerOutput | None:
         # ensure any previous non-blocking PP sends are complete
+        # 检查上一轮发出的数据是否已经送达。确保显存中的缓冲区可以安全地被本轮计算覆盖。
         if self._pp_send_work:
             for handle in self._pp_send_work:
                 handle.wait()
             self._pp_send_work = []
 
-        intermediate_tensors = None
-        forward_pass = scheduler_output.total_num_scheduled_tokens > 0
-        num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
+        intermediate_tensors = None # 中间张量
+        forward_pass = scheduler_output.total_num_scheduled_tokens > 0 # 本轮调度是否要正向执行
+        num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens # 本轮需要生成的新 token 数量
+        # Sequence Parallelism 将长文本的 Sequence 维度拆分到多个 CPU 上
+        # 在某些步骤，可能需要收集来自各个 rank 的结果整合起来做下一步运算
         all_gather_tensors = {}
         compilation_config = self.vllm_config.compilation_config
         parallel_config = self.vllm_config.parallel_config
 
         if (
-            parallel_config.pipeline_parallel_size > 1
-            and compilation_config.pass_config.enable_sp
-            and forward_pass
+            parallel_config.pipeline_parallel_size > 1 # 开启流水线并行（PP）
+            and compilation_config.pass_config.enable_sp # 开启序列并行（SP）
+            and forward_pass # 需要正向推理
         ):
             # currently only supported by V1 GPUModelRunner
             assert not self.use_v2_model_runner
+            # 每个 Request 需要的 token 数量，存储在一个 np array 中
             num_scheduled_tokens_np = np.array(
                 list(scheduler_output.num_scheduled_tokens.values()),
                 dtype=np.int32,
@@ -780,12 +784,13 @@ class Worker(WorkerBase):
             # TODO(lucas): This is pretty gross; ideally we should only ever call
             # `_determine_batch_execution_and_padding` once (will get called again
             # in `execute_model`) but this requires a larger refactor of PP.
+            # 获取到一个 BatchDescriptor
             _, batch_desc, _, _, _ = (
                 self.model_runner._determine_batch_execution_and_padding(
-                    num_tokens=num_scheduled_tokens,
-                    num_reqs=len(num_scheduled_tokens_np),
-                    num_scheduled_tokens_np=num_scheduled_tokens_np,
-                    max_num_scheduled_tokens=num_scheduled_tokens_np.max(),
+                    num_tokens=num_scheduled_tokens, # 本轮 Execution 调度的总 token 数量
+                    num_reqs=len(num_scheduled_tokens_np), # 本轮 Execution 处理的 Request 数量
+                    num_scheduled_tokens_np=num_scheduled_tokens_np, # 每个 Request 处理的 Token 数量
+                    max_num_scheduled_tokens=num_scheduled_tokens_np.max(), # 所有 Request 中调度最多的 Token 数量
                     use_cascade_attn=False,  # TODO(lucas): Handle cascade attention
                 )
             )
@@ -795,6 +800,7 @@ class Worker(WorkerBase):
                 )
             }
 
+        # 当前 worker 不是流水线的第一级，发起一个非阻塞接收
         if forward_pass and not get_pp_group().is_first_rank:
             tensor_dict, comm_handles, comm_postprocess = (
                 get_pp_group().irecv_tensor_dict(
@@ -810,6 +816,7 @@ class Worker(WorkerBase):
             )
 
         with self.annotate_profile(scheduler_output):
+            # 将接收到的中间张量和当前的调度信息传递给底层 ModelRunner 执行并返回结果
             output = self.model_runner.execute_model(
                 scheduler_output, intermediate_tensors
             )

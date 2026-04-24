@@ -85,6 +85,9 @@ def with_cancellation(handler_func):
         handler_task = asyncio.create_task(handler_func(*args, **kwargs))
         cancellation_task = asyncio.create_task(listen_for_disconnect(request))
 
+        # 执行两个异步任务，handler_task - 实际的业务逻辑函数；cancellation_task - 监听ASGI http.disconnect 信号的任务
+        # 使用参数 return_when=asyncio.FIRST_COMPLETED，其中任意一个任务完成都会继续向下走
+        # 返回 done - 已经做完的任务，pending - 未做完的任务
         done, pending = await asyncio.wait(
             [handler_task, cancellation_task], return_when=asyncio.FIRST_COMPLETED
         )

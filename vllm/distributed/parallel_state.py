@@ -688,20 +688,23 @@ class GroupCoordinator:
             "Invalid source rank. Source rank is the same as the current rank."
         )
 
+        # 在 cpu 上申请一个 size 为 1 的 torch.long 向量，用于接收元数据
         size_tensor = torch.empty(1, dtype=torch.long, device="cpu")
 
         # Receive object size
+        # 阻塞接收 src 
         rank_size = torch.distributed.recv(
             size_tensor, src=self.ranks[src], group=self.cpu_group
         )
 
         # Tensor to receive serialized objects into.
         object_tensor = torch.empty(  # type: ignore[call-overload]
-            size_tensor.item(),  # type: ignore[arg-type]
-            dtype=torch.uint8,
+            size_tensor.item(), # 将只有 1 个元素的 PyTorch Tensor 转换成标准的 Python 数字，表示对伐即将发送的字节数
+            dtype=torch.uint8, # 无符号 8 位整数类型，用于接收字节流
             device="cpu",
         )
 
+        # 正式接收数据
         rank_object = torch.distributed.recv(
             object_tensor, src=self.ranks[src], group=self.cpu_group
         )
@@ -710,6 +713,7 @@ class GroupCoordinator:
             "Received object sender rank does not match the size sender rank."
         )
 
+        # 将字节流重新拼装为 python 对象
         obj = pickle.loads(object_tensor.numpy().tobytes())
 
         return obj
@@ -977,7 +981,7 @@ class GroupCoordinator:
         group = self.device_group
         metadata_group = self.cpu_group
 
-        recv_metadata_list = self.recv_object(src=src)
+        recv_metadata_list = self.recv_object(src=src) # 从编号为 src 的进程中同步接收张量元数据({"元数据1": Tensor，···})
         tensor_dict: dict[str, Any] = {}
         handles: list[Handle] = []
         postprocess: list[Callable[[], None]] = []
@@ -990,15 +994,18 @@ class GroupCoordinator:
                 if full_tensor.numel() == 0:
                     tensor_dict[key] = full_tensor
                     continue
-
+                
+                # 模型同时开启 PP 和 SP
                 if self._should_use_all_gather(
                     key, full_tensor.numel(), all_gather_group, all_gather_tensors
                 ):
                     orig_shape = full_tensor.shape
+                    # 每个 worker 自己需要的片段大小
                     slice_tensor = full_tensor.reshape(all_gather_size, -1)[
                         all_gather_rank
                     ]
                     comm_group = metadata_group if slice_tensor.is_cpu else group
+                    # 异步接收自己需要的数据，将句柄存储到 handles 中
                     handle = torch.distributed.irecv(
                         slice_tensor, src=self.ranks[src], group=comm_group
                     )

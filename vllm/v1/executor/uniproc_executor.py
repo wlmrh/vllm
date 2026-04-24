@@ -63,15 +63,16 @@ class UniProcExecutor(Executor):
     @cached_property
     def max_concurrent_batches(self) -> int:
         return 2 if self.scheduler_config.async_scheduling else 1
-
+    
+    # 将指令转发给 worker 执行并执行，根据设置决定同步等待还是异步返回
     def collective_rpc(  # type: ignore[override]
         self,
-        method: str | Callable,
-        timeout: float | None = None,
-        args: tuple = (),
+        method: str | Callable, # 执行的具体操作
+        timeout: float | None = None, # 超时时间限制
+        args: tuple = (), # 参数，包括具体参与计算的资源
         kwargs: dict | None = None,
-        non_block: bool = False,
-        single_value: bool = False,
+        non_block: bool = False, # 在获取结果时，同步等待还是异步返回
+        single_value: bool = False, # True: 返回原始值；False: 将原始值包裹在列表中返回
     ) -> Any:
         if kwargs is None:
             kwargs = {}
@@ -102,6 +103,7 @@ class UniProcExecutor(Executor):
     def execute_model(  # type: ignore[override]
         self, scheduler_output: SchedulerOutput, non_block: bool = False
     ) -> ModelRunnerOutput | None | Future[ModelRunnerOutput | None]:
+        # 调用 WorkerWrapperBase 的 execute_model 方法，发布计算任务并获取结果
         output = self.collective_rpc(
             "execute_model",
             args=(scheduler_output,),

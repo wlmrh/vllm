@@ -97,6 +97,8 @@ class Request:
 
         if pooling_params is not None:
             # Pooling models.
+            # 对所有输入 Token 进行一次前向传播，然后通过一个 Pooling 层，得到一个固定维度的向量
+            # 通过将 max_tokens 设置为 1 欺骗调度器
             self.max_tokens = 1
         elif sampling_params is not None:
             # Generative models.
@@ -117,6 +119,8 @@ class Request:
         # Cache per-block prompt-embed hashes to avoid rehashing the same
         # tensor slices when generating extra keys.
         self._prompt_embeds_per_block_hashes: dict[tuple[int, int], bytes] = {}
+
+        # 用户输入的 Token 的长度
         self.num_prompt_tokens = length_from_prompt_token_ids_or_embeds(
             prompt_token_ids, prompt_embeds
         )
@@ -128,12 +132,12 @@ class Request:
         )
 
         # Used in async scheduling.
-        self.num_output_placeholders = 0
+        self.num_output_placeholders = 0 # 输出占位符数量（未被证实的 draft token 数量）
         # Used in forced preemption (reset_prefix_cache) with async scheduling.
         self.discard_latest_async_tokens = False
 
         self.spec_token_ids: list[int] = []
-        self.num_computed_tokens = 0 # 记录当前已完成的计算进度
+        self.num_computed_tokens = 0 # 已经计算的 Token 总数（Prompt 长度 + 已经生成的 Token）
         self.cache_salt: str | None = cache_salt
 
         # Multi-modal related

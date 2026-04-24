@@ -317,12 +317,15 @@ class EngineCore:
         `request_wave`: indicate which wave of requests this is expected to
         belong to in DP case
         """
-        # Validate the request_id type.
+        # 检查 request_id 字段是否合法
         if not isinstance(request.request_id, str):
             raise TypeError(
                 f"request_id must be a string, got {type(request.request_id)}"
             )
 
+        # 生成任务：输入文本 → 输出概率分布 → 采样 Token。
+        # 池化任务：输入文本 → 获取最后一层隐藏状态 → 进行池化（如 Mean Pooling） → 输出固定维度的向量
+        # 检查模型是否支持用户要求的“池化任务”。
         if pooling_params := request.pooling_params:
             supported_pooling_tasks = [
                 task for task in self.get_supported_tasks() if task in POOLING_TASKS
@@ -334,6 +337,7 @@ class EngineCore:
                     f"Supported tasks: {supported_pooling_tasks}"
                 )
 
+        # P/D 分离: 确保硬件/网络环境支持 KV 缓存的异地传输
         if request.kv_transfer_params is not None and (
             not self.scheduler.get_kv_connector()
         ):
@@ -1142,6 +1146,9 @@ class EngineCoreProc(EngineCore):
     def _init_data_parallel(self, vllm_config: VllmConfig):
         pass
 
+    # 当前模型正在处理某些 batch(self.engines_running == True) 或者
+    # 当前调度器中还有没运行完的任务/运行完但是没有返回的任务 或者
+    # 待处理的批次队列不为空
     def has_work(self) -> bool:
         """Returns true if the engine should be stepped."""
         return (
@@ -1150,6 +1157,7 @@ class EngineCoreProc(EngineCore):
             or bool(self.batch_queue)
         )
 
+    # 系统是否收到关机信号(self.shutdown_state 是否保持 EngineShutdownState.RUNNING 状态)
     def is_running(self) -> bool:
         """Returns true if shutdown has not been requested."""
         return self.shutdown_state == EngineShutdownState.RUNNING
@@ -1163,7 +1171,7 @@ class EngineCoreProc(EngineCore):
             self._process_engine_step()
 
         raise SystemExit
-
+    
     def _process_input_queue(self):
         """Exits when an engine step needs to be performed."""
 
@@ -1180,8 +1188,8 @@ class EngineCoreProc(EngineCore):
                     waited = True
             block = self.process_input_queue_block
             try:
-                req = self.input_queue.get(block=block)
-                self._handle_client_request(*req)
+                req = self.input_queue.get(block=block) # 持续监听，取出 input_queue 中存放的输入（EngineCoreRequest)
+                self._handle_client_request(*req) # 处理输入，将其 add 进 Scheduler 的 waiting 队列中等待调度
             except queue.Empty:
                 break
             if not block:
@@ -1192,17 +1200,17 @@ class EngineCoreProc(EngineCore):
 
         # Handle any more client requests.
         while not self.input_queue.empty():
-            req = self.input_queue.get_nowait()
-            self._handle_client_request(*req)
+            req = self.input_queue.get_nowait() # 从队列中取出一项数据，如果队列为空，也不阻塞等待
+            self._handle_client_request(*req) # 将该任务传递给 EngineCore 并最终添加到 Scheduler 的 waiting 队列中
 
     def _process_engine_step(self) -> bool:
         """Called only when there are unfinished local requests."""
 
         # Step the engine core.
-        outputs, model_executed = self.step_fn()
+        outputs, model_executed = self.step_fn() # 调用 EngineCore 的 step_fn，反复进行推理
         # Put EngineCoreOutputs into the output queue.
         for output in outputs.items() if outputs else ():
-            self.output_queue.put_nowait(output)
+            self.output_queue.put_nowait(output) # 尝试将输出 output 放入队列中，如果队列已满，不等待，直接抛出异常
         # Post-step hook.
         self.post_step(model_executed)
 
@@ -1263,12 +1271,12 @@ class EngineCoreProc(EngineCore):
 
         if request_type == EngineCoreRequestType.WAKEUP:
             return
-        elif request_type == EngineCoreRequestType.ADD:
+        elif request_type == EngineCoreRequestType.ADD: # 提交新的推理任务
             req, request_wave = request
             if self._reject_add_in_shutdown(req):
                 return
             self.add_request(req, request_wave)
-        elif request_type == EngineCoreRequestType.ABORT:
+        elif request_type == EngineCoreRequestType.ABORT: # 取消某些进行中的推理任务
             self.abort_requests(request)
         elif request_type == EngineCoreRequestType.UTILITY:
             client_idx, call_id, method_name, args = request

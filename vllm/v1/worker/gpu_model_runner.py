@@ -494,7 +494,7 @@ class GPUModelRunner(
         # Lazy initializations
         # self.model: nn.Module  # Set after load_model
         # Initialize in initialize_kv_cache
-        self.kv_caches: list[torch.Tensor] = []
+        self.kv_caches: list[torch.Tensor] = [] # 当前 ModelRunner 中可用的 KV Cache 列表，长度为当前 rank 中负责推理的模型层的数量
         # Initialize in initialize_kv_cache_tensors
         self.cross_layers_kv_cache: torch.Tensor | None = None
         self.cross_layers_attn_backend: type[AttentionBackend] | None = None
@@ -1098,9 +1098,9 @@ class GPUModelRunner(
         # or running requests that are not scheduled in this step. We remove
         # them from the persistent batch but keep their cached states since
         # they will be scheduled again sometime in the future.
-        scheduled_req_ids = scheduler_output.num_scheduled_tokens.keys()
-        cached_req_ids = self.input_batch.req_id_to_index.keys()
-        resumed_req_ids = scheduler_output.scheduled_cached_reqs.resumed_req_ids
+        scheduled_req_ids = scheduler_output.num_scheduled_tokens.keys() # 被调度的所有任务 id
+        cached_req_ids = self.input_batch.req_id_to_index.keys() # 每个被调度的任务的结果存储位置（index）
+        resumed_req_ids = scheduler_output.scheduled_cached_reqs.resumed_req_ids # 已经调度过的有 cache 的所有请求 id 序列
         # NOTE(zhuohan): cached_req_ids and resumed_req_ids are usually disjoint,
         # so `(scheduled_req_ids - resumed_req_ids) == scheduled_req_ids` holds
         # apart from the forced-preemption case in reset_prefix_cache. And in
@@ -3825,12 +3825,13 @@ class GPUModelRunner(
             assert kv_connector_metadata is not None
             get_kv_transfer_group().handle_preemptions(kv_connector_metadata)
 
-        num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
+        num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens # 本轮调度的总 token 数量
         with (
             record_function_or_nullcontext("gpu_model_runner: preprocess"),
             self.synchronize_input_prep(),
         ):
             # Update persistent batch states.
+            # 根据 scheduler_output 更新可持久化 batch 的缓存
             deferred_state_corrections_fn = self._update_states(scheduler_output)
 
             if has_ec_transfer() and not get_ec_transfer().is_consumer:
@@ -3984,6 +3985,7 @@ class GPUModelRunner(
                 ubatch_slices=ubatch_slices_padded,
             )
 
+            # 准备算子元数据
             attn_metadata, spec_decode_common_attn_metadata = (
                 self._build_attention_metadata(
                     num_tokens=num_tokens_unpadded,

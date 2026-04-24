@@ -239,6 +239,7 @@ class OpenAIServingChat(OpenAIServing):
         Chat Completion API.
         """
         # Streaming response
+        # 选择合适的 tokenizer
         tokenizer = self.renderer.tokenizer
         assert tokenizer is not None
         chat_template_kwargs = self._effective_chat_template_kwargs(request)
@@ -248,6 +249,7 @@ class OpenAIServingChat(OpenAIServing):
                 tokenizer,
                 chat_template_kwargs=chat_template_kwargs,  # type: ignore[call-arg]
             )
+        # 使用 tokenizer 处理 request 得到对应的 (conversation, engine_inputs)
         result = await self.render_chat_request(request)
         if isinstance(result, ErrorResponse):
             return result

@@ -349,7 +349,7 @@ class Handle:
     remote_subscribe_addr: str | None = None
     remote_addr_ipv6: bool = False
 
-
+# 消息队列，内部封装了整个通信过程
 class MessageQueue:
     def __init__(
         self,
@@ -366,12 +366,13 @@ class MessageQueue:
             local_reader_ranks = list(range(n_local_reader))
         else:
             assert len(local_reader_ranks) == n_local_reader
-        self.n_local_reader = n_local_reader
+        self.n_local_reader = n_local_reader # 当前 node 上的 reader 数量
         n_remote_reader = n_reader - n_local_reader
-        self.n_remote_reader = n_remote_reader
+        self.n_remote_reader = n_remote_reader # 其他 node 上的 reader 数量
         self.shutting_down = False
         context = Context()
 
+        # 与同 node 上 worker 通信配置
         if n_local_reader > 0:
             # for local readers, we will:
             # 1. create a shared memory ring buffer to communicate small data
@@ -405,6 +406,7 @@ class MessageQueue:
             local_notify_addr = None
             self._spin_condition = None  # type: ignore
 
+        # 与其它 node 上的 worker 通信配置
         remote_addr_ipv6 = False
         if n_remote_reader > 0:
             # for remote readers, we will:
@@ -702,7 +704,7 @@ class MessageQueue:
 
     def enqueue(self, obj, timeout: float | None = None):
         """Write to message queue with optional timeout (in seconds)"""
-        assert self._is_writer, "Only writers can enqueue"
+        assert self._is_writer, "Only writers can enqueue" # 检查当前是否为发送端的 MessageQueue
         all_buffers: list[SizedBuffer] = [b""]
         total_bytes = 6  # 2 bytes for oob buffer count, 4 for main buffer size
 

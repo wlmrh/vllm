@@ -357,13 +357,13 @@ class Scheduler(SchedulerInterface):
         # chunked prefills, prefix caching, speculative decoding,
         # and the "jump decoding" optimization in the future.
 
-        scheduled_new_reqs: list[Request] = []
-        scheduled_resumed_reqs: list[Request] = []
-        scheduled_running_reqs: list[Request] = []
-        preempted_reqs: list[Request] = []
+        scheduled_new_reqs: list[Request] = [] # 当前轮次准备调度的，之前处于 waiting 状态的请求
+        scheduled_resumed_reqs: list[Request] = [] # 当前轮次准备调度的，之前被抢占或交换的请求
+        scheduled_running_reqs: list[Request] = [] # 当前轮次准备调度的，已经处于 running 状态的请求
+        preempted_reqs: list[Request] = [] # 当前轮次中，被抢占的请求
 
-        req_to_new_blocks: dict[str, KVCacheBlocks] = {}
-        num_scheduled_tokens: dict[str, int] = {}
+        req_to_new_blocks: dict[str, KVCacheBlocks] = {} # 每个请求在这一轮中新分配的物理显存块
+        num_scheduled_tokens: dict[str, int] = {} # 当前轮次准备调度的，每个请求新增的 token 数量
         token_budget = self.max_num_scheduled_tokens # Max tokens generated in a step
         if self._pause_state == PauseState.PAUSED_ALL:
             # Do not schedule any requests when paused.
@@ -385,6 +385,8 @@ class Scheduler(SchedulerInterface):
         while req_index < len(self.running) and token_budget > 0:
             request = self.running[req_index]
 
+            # 在异步执行下，检查在之前的调度过程中，当前请求是否已经达到了最大生成长度
+            # 如果达到，跳过该请求
             if (
                 request.num_output_placeholders > 0
                 # This is (num_computed_tokens + 1) - (num_output_placeholders - 1).
@@ -401,7 +403,8 @@ class Scheduler(SchedulerInterface):
                 req_index += 1
                 continue
 
-            # 本轮新增加的 Token 数量
+            # 请求没有达到最大生成长度，则计算本轮调度需要处理的 Token 总数
+            # 
             num_new_tokens = (
                 request.num_tokens_with_spec
                 + request.num_output_placeholders
@@ -409,6 +412,8 @@ class Scheduler(SchedulerInterface):
             )
             if 0 < self.scheduler_config.long_prefill_token_threshold < num_new_tokens:
                 num_new_tokens = self.scheduler_config.long_prefill_token_threshold
+            
+            # 在参数的限制下，为其分配资源
             num_new_tokens = min(num_new_tokens, token_budget)
 
             # Make sure the input position does not exceed the max model len.
